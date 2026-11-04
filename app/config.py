@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     jwt_access_expire: int = 3600  # seconds (1 hour)
     jwt_refresh_expire: int = 604800  # seconds (7 days)
     google_client_id: str  # Google ID tokens must be issued for this client, or they're rejected
+    github_webhook_secret: str  # the GitHub App's webhook secret: proves a delivery really came from GitHub
 
 
 settings = Settings()

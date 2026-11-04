@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routers import auth, comments, issues, projects, sprints, teams, users, views, workspaces
+from app.routers import auth, comments, github, issues, projects, sprints, teams, users, views, workspaces
 
 app = FastAPI()
 app.include_router(auth.router)
@@ -12,6 +12,7 @@ app.include_router(projects.router)
 app.include_router(issues.router)
 app.include_router(comments.router)
 app.include_router(views.router)
+app.include_router(github.router)
 
 
 @app.get("/health")
