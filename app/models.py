@@ -246,3 +246,18 @@ class View(Base):
     is_shared: Mapped[bool] = mapped_column(Boolean, server_default="false")
     created_at: Mapped[datetime] = created_at_column()
     updated_at: Mapped[datetime] = updated_at_column()
+
+
+class GithubInstallation(Base):
+    """A workspace's GitHub connection: one installation of the Tack GitHub App.
+
+    One per workspace (workspace_id is the key), and an installation serves one workspace (unique), so each
+    webhook's installation id names exactly one workspace.
+    """
+
+    __tablename__ = "github_installations"
+
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    installation_id: Mapped[int] = mapped_column(BigInteger, unique=True)  # GitHub's ids outgrow 32-bit integers
+    account_login: Mapped[str] = mapped_column(Text)  # the GitHub user or org it's installed on, for display
+    created_at: Mapped[datetime] = created_at_column()

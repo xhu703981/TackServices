@@ -13,6 +13,7 @@ app.include_router(issues.router)
 app.include_router(comments.router)
 app.include_router(views.router)
 app.include_router(github.router)
+app.include_router(github.workspace_router)
 
 
 @app.get("/health")

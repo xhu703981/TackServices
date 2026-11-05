@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     google_client_id: str  # Google ID tokens must be issued for this client, or they're rejected
     github_webhook_secret: str  # the GitHub App's webhook secret: proves a delivery really came from GitHub
     github_app_id: int  # shown on the GitHub App's settings page
+    github_app_slug: str  # the app's name in its URL, github.com/apps/<slug>: the install page lives there
     github_private_key_path: Path  # the app's .pem (gitignored); relative paths start at the project root
 
 
