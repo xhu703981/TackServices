@@ -498,3 +498,16 @@ class GithubConnect(BaseModel):
     """What GitHub's redirect after installing carries back (?installation_id=...&state=...)."""
     installation_id: int
     state: str
+
+
+class PullRequestOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    repo: str
+    number: int
+    title: str
+    url: str
+    state: str  # open | draft | merged | closed
+    branch: str
+    author: str
+    created_at: datetime  # when it was linked to the issue

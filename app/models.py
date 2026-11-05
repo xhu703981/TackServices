@@ -261,3 +261,30 @@ class GithubInstallation(Base):
     installation_id: Mapped[int] = mapped_column(BigInteger, unique=True)  # GitHub's ids outgrow 32-bit integers
     account_login: Mapped[str] = mapped_column(Text)  # the GitHub user or org it's installed on, for display
     created_at: Mapped[datetime] = created_at_column()
+
+
+class PullRequest(Base):
+    """A GitHub pull request linked to an issue, because its branch, title or description mentions the key (ENG-12).
+
+    One row per (issue, PR): a PR can mention several issues, and an issue can have several PRs. Webhooks keep
+    title and state current. A link stays once made, even if a later edit drops the key.
+    """
+
+    __tablename__ = "pull_requests"
+    __table_args__ = (
+        CheckConstraint("state IN ('open', 'draft', 'merged', 'closed')", name="state_valid"),
+        UniqueConstraint("issue_id", "repo", "number"),
+        # A webhook names the PR by repo and number: this finds every issue it's linked to.
+        Index("ix_pull_requests_repo_number", "repo", "number"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id", ondelete="CASCADE"))
+    repo: Mapped[str] = mapped_column(Text)  # "owner/name"
+    number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text)
+    branch: Mapped[str] = mapped_column(Text)
+    author: Mapped[str] = mapped_column(Text)  # GitHub login of whoever opened it
+    created_at: Mapped[datetime] = created_at_column()
