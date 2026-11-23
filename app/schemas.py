@@ -480,3 +480,33 @@ class ViewOut(BaseModel):
     is_shared: bool
     created_at: datetime
     updated_at: datetime
+
+
+# ---------- GitHub integration ----------
+
+class GithubStatus(BaseModel):
+    connected: bool
+    account: str | None = None  # the GitHub user or org the app is installed on
+    repositories: list[str] = []  # "owner/name" of each repo the installation can see
+
+
+class GithubInstallUrl(BaseModel):
+    url: str
+
+
+class GithubConnect(BaseModel):
+    """What GitHub's redirect after installing carries back (?installation_id=...&state=...)."""
+    installation_id: int
+    state: str
+
+
+class CommitOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    repo: str
+    sha: str
+    message: str
+    url: str
+    author: str
+    branch: str
+    committed_at: datetime

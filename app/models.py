@@ -246,3 +246,52 @@ class View(Base):
     is_shared: Mapped[bool] = mapped_column(Boolean, server_default="false")
     created_at: Mapped[datetime] = created_at_column()
     updated_at: Mapped[datetime] = updated_at_column()
+
+
+class GithubInstallation(Base):
+    """A workspace's GitHub connection: one installation of the Tack GitHub App.
+
+    One per workspace (workspace_id is the key), and an installation serves one workspace (unique), so each
+    webhook's installation id names exactly one workspace.
+    """
+
+    __tablename__ = "github_installations"
+
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    installation_id: Mapped[int] = mapped_column(BigInteger, unique=True)  # GitHub's ids outgrow 32-bit integers
+    account_login: Mapped[str] = mapped_column(Text)  # the GitHub user or org it's installed on, for display
+    created_at: Mapped[datetime] = created_at_column()
+
+
+class CommitIssue(Base):
+    """A commit's message mentions this issue's key (ENG-12). A commit can name several issues."""
+
+    __tablename__ = "commit_issues"
+
+    commit_id: Mapped[int] = mapped_column(ForeignKey("commits.id", ondelete="CASCADE"), primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
+class Commit(Base):
+    """A commit pushed to a repo of the workspace's GitHub installation.
+
+    Every pushed commit is kept. One whose message names no real issue has no commit_issues rows:
+    it shows in the workspace's unlinked commits instead of under an issue.
+    """
+
+    __tablename__ = "commits"
+    # The same commit pushed again (another branch, a re-push) is the same row.
+    __table_args__ = (UniqueConstraint("workspace_id", "repo", "sha"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    repo: Mapped[str] = mapped_column(Text)  # "owner/name"
+    sha: Mapped[str] = mapped_column(Text)
+    message: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text)
+    author: Mapped[str] = mapped_column(Text)  # GitHub login, else the git author name
+    branch: Mapped[str] = mapped_column(Text)  # the branch it was first pushed to
+    committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created_at_column()
+
+    issues: Mapped[list[Issue]] = relationship(secondary="commit_issues")

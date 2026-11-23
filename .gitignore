@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# GitHub App private key: whoever has it can act as the app
+*.pem
