@@ -16,14 +16,14 @@ from sqlalchemy.orm import Session
 from app.access import Ctx, get_issue, require_admin, workspace_ctx
 from app.config import ENV_FILE, settings
 from app.database import get_db
-from app.models import GithubInstallation, Issue, PullRequest, Team
-from app.schemas import GithubConnect, GithubInstallUrl, GithubStatus, PullRequestOut
+from app.models import Commit, CommitIssue, GithubInstallation, Issue, Team
+from app.schemas import CommitOut, GithubConnect, GithubInstallUrl, GithubStatus
 from app.security import ALGORITHM
 
 router = APIRouter(prefix="/github", tags=["github"])
 # A workspace's connection to GitHub: Settings → Integrations → GitHub.
 workspace_router = APIRouter(prefix="/w/{slug}/integrations/github", tags=["github"])
-# The PRs linked to one issue, for the issue page.
+# The commits linked to one issue, for the issue page.
 issue_router = APIRouter(prefix="/w/{slug}/issues/{issue_key}", tags=["github"])
 
 # An issue key as people write it: team key (a letter, then 1-9 letters/digits) - number. "eng-12" counts too.
@@ -59,68 +59,53 @@ def installation_token(installation_id: int) -> str:
     return res.json()["token"]
 
 
-def comment_on_pr(installation_id: int, repo: str, number: int, body: str) -> None:
-    # On GitHub's API a pull request is also an issue, and PR conversation comments are issue comments.
-    res = requests.post(
-        f"{API}/repos/{repo}/issues/{number}/comments",
-        headers={**API_HEADERS, "Authorization": f"Bearer {installation_token(installation_id)}"},
-        json={"body": body},
-        timeout=10,
-    )
-    res.raise_for_status()
-
-
 # ---------- Webhooks ----------
 
-def pr_state(pr: dict) -> str:
-    if pr["merged"]:  # GitHub says "closed" for merged PRs too
-        return "merged"
-    if pr["state"] == "closed":
-        return "closed"
-    return "draft" if pr["draft"] else "open"
+def message_keys(message: str) -> set[tuple[str, int]]:
+    return {(team.upper(), int(n)) for team, n in ISSUE_KEY.findall(message)}
 
 
-def link_pull_request(db: Session, payload: dict) -> None:
-    """Every PR action: refresh the PR on the issues it's linked to, and link it to any issue it newly mentions."""
-    pr, repo = payload["pull_request"], payload["repository"]["full_name"]
-    log.info("GitHub: pull_request %s #%s %r (branch %s) in %s", payload["action"], pr["number"], pr["title"], pr["head"]["ref"], repo)
+def record_push(db: Session, payload: dict) -> None:
+    """Every push: keep each new commit, under the issues its message names, or unlinked if it names none."""
+    repo, branch = payload["repository"]["full_name"], payload["ref"].removeprefix("refs/heads/")
+    commits = payload["commits"]  # GitHub sends at most 20 per push; commits beyond that aren't recorded
+    log.info("GitHub: push of %s commit(s) to %s in %s", len(commits), branch, repo)
     inst = db.scalars(select(GithubInstallation).where(GithubInstallation.installation_id == payload["installation"]["id"])).first()
-    if inst is None:
-        return  # installed on GitHub but not connected to a Tack workspace: nothing to link to
+    if inst is None or not commits:
+        return  # not connected to a Tack workspace, or nothing new (a branch deleted)
 
-    fields = dict(
-        title=pr["title"], url=pr["html_url"], state=pr_state(pr), branch=pr["head"]["ref"], author=pr["user"]["login"],
-    )
-    rows = db.scalars(select(PullRequest).where(PullRequest.repo == repo, PullRequest.number == pr["number"])).all()
-    for row in rows:
-        for name, value in fields.items():
-            setattr(row, name, value)
+    # A commit already pushed (to another branch, or before a rebase kept it) is already recorded.
+    known = set(db.scalars(
+        select(Commit.sha).where(Commit.workspace_id == inst.workspace_id, Commit.repo == repo, Commit.sha.in_([c["id"] for c in commits]))
+    ))
+    new = [c for c in commits if c["id"] not in known]
 
-    # Keys anywhere in branch, title or description, then only those that are real issues of this workspace.
-    keys = {(team.upper(), int(n)) for team, n in ISSUE_KEY.findall(f"{pr['head']['ref']} {pr['title']} {pr['body'] or ''}")}
-    issues = []
+    # Keys in the messages, then only those that are real issues of this workspace.
+    keys = set().union(*(message_keys(c["message"]) for c in new))
+    issues = {}
     if keys:
-        issues = db.execute(
-            select(Issue.id, Team.key, Issue.number, Issue.title)
+        rows = db.execute(
+            select(Issue, Team.key)
             .join(Team, Issue.team_id == Team.id)
             .where(Team.workspace_id == inst.workspace_id, tuple_(Team.key, Issue.number).in_(keys))
         ).all()
-    linked = {row.issue_id for row in rows}
-    new = [i for i in issues if i.id not in linked]
-    for i in new:
-        db.add(PullRequest(issue_id=i.id, repo=repo, number=pr["number"], **fields))
-    db.commit()
+        issues = {(key, issue.number): issue for issue, key in rows}
 
-    if new:
-        # One comment per new link, so the PR shows where it's tracked. Later actions stay quiet on GitHub.
-        lines = "\n".join(f"- **{key}-{number}**: {title}" for _, key, number, title in new)
-        comment_on_pr(inst.installation_id, repo, pr["number"], f"Linked to Tack:\n{lines}")
-        log.info("GitHub: linked %s#%s to %s", repo, pr["number"], ", ".join(f"{k}-{n}" for _, k, n, _ in new))
+    for c in new:
+        found = [k for k in message_keys(c["message"]) if k in issues]
+        db.add(Commit(
+            workspace_id=inst.workspace_id, repo=repo, sha=c["id"], message=c["message"], url=c["url"],
+            # username is there only when the commit's email belongs to a GitHub account.
+            author=c["author"].get("username") or c["author"]["name"], branch=branch,
+            committed_at=datetime.fromisoformat(c["timestamp"]), issues=[issues[k] for k in found],
+        ))
+        log.info("GitHub: commit %s -> %s", c["id"][:7], ", ".join(f"{k}-{n}" for k, n in found) or "unlinked")
+    db.commit()
 
 
 def handle_event(db: Session, event: str, payload: dict) -> None:
-    if event == "pull_request":
-        link_pull_request(db, payload)
+    if event == "push":
+        record_push(db, payload)
     elif event == "installation" and payload["action"] == "deleted":
         # Uninstalled on GitHub: whichever workspace it served is no longer connected.
         db.execute(delete(GithubInstallation).where(GithubInstallation.installation_id == payload["installation"]["id"]))
@@ -223,10 +208,23 @@ def github_connect(payload: GithubConnect, ctx: Ctx = Depends(workspace_ctx), db
     return GithubStatus(connected=True, account=account, repositories=installation_repos(payload.installation_id))
 
 
-@issue_router.get("/pull-requests", response_model=list[PullRequestOut])
-def issue_pull_requests(issue_key: str, ctx: Ctx = Depends(workspace_ctx), db: Session = Depends(get_db)):
+@issue_router.get("/commits", response_model=list[CommitOut])
+def issue_commits(issue_key: str, ctx: Ctx = Depends(workspace_ctx), db: Session = Depends(get_db)):
     issue = get_issue(db, ctx, issue_key)
-    return db.scalars(select(PullRequest).where(PullRequest.issue_id == issue.id).order_by(PullRequest.created_at)).all()
+    return db.scalars(
+        select(Commit).join(CommitIssue).where(CommitIssue.issue_id == issue.id).order_by(Commit.committed_at.desc())
+    ).all()
+
+
+@workspace_router.get("/unlinked-commits", response_model=list[CommitOut])
+def unlinked_commits(ctx: Ctx = Depends(workspace_ctx), db: Session = Depends(get_db)):
+    """Pushed commits whose message names no issue of this workspace, newest 100."""
+    return db.scalars(
+        select(Commit)
+        .where(Commit.workspace_id == ctx.workspace.id, ~Commit.issues.any())
+        .order_by(Commit.committed_at.desc())
+        .limit(100)
+    ).all()
 
 
 @workspace_router.delete("", status_code=204)

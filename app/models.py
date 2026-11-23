@@ -263,28 +263,35 @@ class GithubInstallation(Base):
     created_at: Mapped[datetime] = created_at_column()
 
 
-class PullRequest(Base):
-    """A GitHub pull request linked to an issue, because its branch, title or description mentions the key (ENG-12).
+class CommitIssue(Base):
+    """A commit's message mentions this issue's key (ENG-12). A commit can name several issues."""
 
-    One row per (issue, PR): a PR can mention several issues, and an issue can have several PRs. Webhooks keep
-    title and state current. A link stays once made, even if a later edit drops the key.
+    __tablename__ = "commit_issues"
+
+    commit_id: Mapped[int] = mapped_column(ForeignKey("commits.id", ondelete="CASCADE"), primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
+class Commit(Base):
+    """A commit pushed to a repo of the workspace's GitHub installation.
+
+    Every pushed commit is kept. One whose message names no real issue has no commit_issues rows:
+    it shows in the workspace's unlinked commits instead of under an issue.
     """
 
-    __tablename__ = "pull_requests"
-    __table_args__ = (
-        CheckConstraint("state IN ('open', 'draft', 'merged', 'closed')", name="state_valid"),
-        UniqueConstraint("issue_id", "repo", "number"),
-        # A webhook names the PR by repo and number: this finds every issue it's linked to.
-        Index("ix_pull_requests_repo_number", "repo", "number"),
-    )
+    __tablename__ = "commits"
+    # The same commit pushed again (another branch, a re-push) is the same row.
+    __table_args__ = (UniqueConstraint("workspace_id", "repo", "sha"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id", ondelete="CASCADE"))
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     repo: Mapped[str] = mapped_column(Text)  # "owner/name"
-    number: Mapped[int] = mapped_column(Integer)
-    title: Mapped[str] = mapped_column(Text)
+    sha: Mapped[str] = mapped_column(Text)
+    message: Mapped[str] = mapped_column(Text)
     url: Mapped[str] = mapped_column(Text)
-    state: Mapped[str] = mapped_column(Text)
-    branch: Mapped[str] = mapped_column(Text)
-    author: Mapped[str] = mapped_column(Text)  # GitHub login of whoever opened it
+    author: Mapped[str] = mapped_column(Text)  # GitHub login, else the git author name
+    branch: Mapped[str] = mapped_column(Text)  # the branch it was first pushed to
+    committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created_at_column()
+
+    issues: Mapped[list[Issue]] = relationship(secondary="commit_issues")

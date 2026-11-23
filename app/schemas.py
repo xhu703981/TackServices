@@ -500,14 +500,13 @@ class GithubConnect(BaseModel):
     state: str
 
 
-class PullRequestOut(BaseModel):
+class CommitOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     repo: str
-    number: int
-    title: str
+    sha: str
+    message: str
     url: str
-    state: str  # open | draft | merged | closed
-    branch: str
     author: str
-    created_at: datetime  # when it was linked to the issue
+    branch: str
+    committed_at: datetime
